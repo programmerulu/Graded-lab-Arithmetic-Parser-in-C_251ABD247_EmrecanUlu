@@ -53,7 +53,7 @@ char *read_file(const char *path, size_t *out_len){
   
 }
 
-typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_LPAREN, TOK_RPAREN, TOK_EOL, TOK_BAD } TokType;
+typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_POW, TOK_LPAREN, TOK_RPAREN, TOK_EOL, TOK_BAD } TokType;
 
 typedef struct {
     TokType type;
@@ -85,7 +85,10 @@ Token next_token(const char *text, size_t len, size_t *p)
     }
     if (c == '+') { t.type = TOK_PLUS;  (*p)++; return t; }
     if (c == '-') { t.type = TOK_MINUS; (*p)++; return t; }
-    if (c == '*') { t.type = TOK_STAR;  (*p)++; return t; }
+    if (c == '*') {
+        if (*p + 1 < len && text[*p + 1] == '*') { t.type = TOK_POW; (*p) += 2; return t; }
+        t.type = TOK_STAR; (*p)++; return t;
+    }
     if (c == '/') { t.type = TOK_SLASH; (*p)++; return t; }
     if (c == '(') { t.type = TOK_LPAREN; (*p)++; return t; }
     if (c == ')') { t.type = TOK_RPAREN; (*p)++; return t; }
@@ -117,10 +120,41 @@ size_t parse_primary(const char *text, size_t len, size_t *p, long long *out)
     return t.pos + 1;
 }
 
+
+size_t parse_power(const char *text, size_t len, size_t *p, long long *out)
+{
+    long long base = 0;
+    size_t err = parse_primary(text, len, p, &base);
+    if (err != 0) return err;
+
+    size_t q = *p;
+    Token op = next_token(text, len, &q);
+    if (op.type != TOK_POW) { *out = base; return 0; }
+    *p = q;
+
+    size_t q2 = *p;
+    Token first = next_token(text, len, &q2);
+
+    long long ex = 0;
+    err = parse_power(text, len, p, &ex);
+    if (err != 0) return err;
+
+    if (ex < 0) return first.pos + 1;
+
+    unsigned long long result = 1, b = (unsigned long long)base;
+    while (ex > 0) {
+        if (ex & 1) result *= b;
+        b *= b;
+        ex >>= 1;
+    }
+    *out = (long long)result;
+    return 0;
+}
+
 size_t parse_term(const char *text, size_t len, size_t *p, long long *out)
 {
     long long value = 0;
-    size_t err = parse_primary(text, len, p, &value);
+    size_t err = parse_power(text, len, p, &value);
     if (err != 0) return err;
 
     for (;;) {
@@ -133,7 +167,7 @@ size_t parse_term(const char *text, size_t len, size_t *p, long long *out)
         Token first = next_token(text, len, &q2);
 
         long long rhs = 0;
-        err = parse_primary(text, len, p, &rhs);
+        err = parse_power(text, len, p, &rhs);
         if (err != 0) return err;
 
         if (op.type == TOK_STAR) {
@@ -281,6 +315,13 @@ int main(int argc, char**argv) {
     if (s >= len) break;
     if (text[s] == '\n') {
         i = s + 1;
+        continue;
+    }
+
+        if (text[s] == '#') {
+        size_t k = s;
+        while (k < len && text[k] != '\n') k++;
+        i = k + 1;
         continue;
     }
 
