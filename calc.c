@@ -9,6 +9,11 @@
 #include <stdlib.h>
 
 
+#define STUDENT_NAME  "emrecan"
+#define STUDENT_LASTNAME  "ulu"
+#define STUDENT_NUMBER  "251ADB247"
+
+
 
 char *read_file(const char *path, size_t *out_len){
   FILE*f=fopen(path,"rb");
@@ -50,6 +55,9 @@ char *read_file(const char *path, size_t *out_len){
 }
 
 int main(int argc, char**argv) {
+
+   
+
    const char *outdir=NULL;
    const char *input=NULL;
   
@@ -96,6 +104,22 @@ int main(int argc, char**argv) {
   }
   
   printf("%zu bytes read\n", len);
+
+  const char *slash = strrchr(input, '/');
+  const char*filename;
+
+  if(slash==NULL){
+    filename=input;
+  }
+
+  else{
+    filename=slash+1;
+  }
+
+  printf("%s\n", filename);
+
+
+
   free(text);
   return 0;
 } 
