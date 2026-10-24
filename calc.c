@@ -53,6 +53,45 @@ char *read_file(const char *path, size_t *out_len){
   
 }
 
+typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_EOL, TOK_BAD } TokType;
+
+typedef struct {
+    TokType type;
+    size_t pos;          // text içindeki indeks (hata pozisyonu = pos + 1)
+    long long value;     // sadece TOK_NUM için anlamlı
+} Token;
+
+// text'in *p indeksinden başlayarak bir sonraki parçayı okur ve *p'yi ilerletir.
+Token next_token(const char *text, size_t len, size_t *p)
+{
+    Token t;
+    t.value = 0;
+
+    while (*p < len && (text[*p] == ' ' || text[*p] == '\t')) (*p)++;
+    t.pos = *p;
+
+    if (*p >= len || text[*p] == '\n') {
+        t.type = TOK_EOL;
+        return t;
+    }
+
+    char c = text[*p];
+    if (c >= '0' && c <= '9') {
+        t.type = TOK_NUM;
+        while (*p < len && text[*p] >= '0' && text[*p] <= '9') {
+            t.value = t.value * 10 + (text[*p] - '0');
+            (*p)++;
+        }
+        return t;
+    }
+    if (c == '+') { t.type = TOK_PLUS;  (*p)++; return t; }
+    if (c == '-') { t.type = TOK_MINUS; (*p)++; return t; }
+
+    t.type = TOK_BAD;
+    (*p)++;
+    return t;
+}
+
 int main(int argc, char**argv) {
 
    
@@ -99,6 +138,8 @@ int main(int argc, char**argv) {
 
   size_t len=0;
   char *text= read_file(input,&len);
+
+
   if(text==NULL){
     fprintf(stderr,"Cannot read '%s'\n",input);
     return 1;
@@ -142,49 +183,26 @@ int main(int argc, char**argv) {
   
 
   size_t i = 0;
-  while (i < len) {
+ while (i < len) {
     size_t s = i;
     while (s < len && (text[s] == ' ' || text[s] == '\t')) s++;
+    if (s >= len) break;
+    if (text[s] == '\n') {
+        i = s + 1;
+        continue;
+    }
 
-      if (s >= len) break;
-      if (text[s] == '\n') {
-          i = s + 1;
-          continue;
-      } 
+    size_t e = s;
+    while (e < len && text[e] != '\n') e++;
 
-      size_t e = s;
-      while (e < len && text[e] != '\n') e++;
+    size_t p2 = s;
+    for (;;) {
+        Token t = next_token(text, len, &p2);
+        fprintf(out, "type=%d pos=%zu value=%lld\n", t.type, t.pos, t.value);
+        if (t.type == TOK_EOL || t.type == TOK_BAD) break;
+    }
 
-      long long value = 0;
-      size_t p = s;
-      while (p < e && text[p] >= '0' && text[p] <= '9') {
-        value = value * 10 + (text[p] - '0');
-        p++;
-      }
-
-      while (p < e) {
-          while (p < e && (text[p] == ' ' || text[p] == '\t')) p++; 
-          if (p >= e) break; 
-          char op = text[p];
-          p++;
-
-          while (p < e && (text[p] == ' ' || text[p] == '\t')) p++; 
-
-          long long num = 0;
-          while (p < e && text[p] >= '0' && text[p] <= '9') {
-              num = num * 10 + (text[p] - '0');
-              p++;
-          }
-
-          if (op == '+') {
-              value += num;
-          } else {
-              value -= num;
-          }
-      }
-
-      fprintf(out, "%lld\n", value);
-      i = e + 1;
+    i = e + 1;
 }
 
   fclose(out);
