@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 
 
@@ -55,10 +56,36 @@ int main(int argc, char**argv) {
   }
 
 
-  char buf[100];
-  size_t got= fread(buf,1,sizeof buf, f);
-  printf("%zu bytes read\n",got);
+  size_t cap=16;
+  size_t len=0;
+  char *buf = malloc(cap + 1);
+  if(buf==NULL){
+    fprintf(stderr,"The file has not been uploaded.\n");
+    fclose(f);
+    return 1;
+  }
 
+  for(;;){
+    size_t got= fread(buf+len,1,cap-len,f);
+    len+=got;
+    if(len<cap){
+        break;
+        
+    }
+    cap*=2;
+    char *tmp = realloc(buf,cap +1);
+        if (tmp == NULL) {
+            free(buf);
+            fclose(f);
+            fprintf(stderr, "Out of memory.\n");
+            return 1;
+}
+    buf = tmp;
+  }
+
+  buf[len]='\0';
+  printf("%zu bytes read\n",len);
   fclose(f);
+  free(buf);
   return 0;
 } 
