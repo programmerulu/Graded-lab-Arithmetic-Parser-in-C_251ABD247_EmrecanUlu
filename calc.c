@@ -104,7 +104,6 @@ int main(int argc, char**argv) {
     return 1;
   }
   
-  printf("%zu bytes read\n", len);
 
   const char *slash = strrchr(input, '/');
   const char*filename;
@@ -156,8 +155,35 @@ int main(int argc, char**argv) {
       size_t e = s;
       while (e < len && text[e] != '\n') e++;
 
-      fprintf(out, "%.*s\n", (int)(e - s), text + s);
+      long long value = 0;
+      size_t p = s;
+      while (p < e && text[p] >= '0' && text[p] <= '9') {
+        value = value * 10 + (text[p] - '0');
+        p++;
+      }
 
+      while (p < e) {
+          while (p < e && (text[p] == ' ' || text[p] == '\t')) p++; 
+          if (p >= e) break; 
+          char op = text[p];
+          p++;
+
+          while (p < e && (text[p] == ' ' || text[p] == '\t')) p++; 
+
+          long long num = 0;
+          while (p < e && text[p] >= '0' && text[p] <= '9') {
+              num = num * 10 + (text[p] - '0');
+              p++;
+          }
+
+          if (op == '+') {
+              value += num;
+          } else {
+              value -= num;
+          }
+      }
+
+      fprintf(out, "%lld\n", value);
       i = e + 1;
 }
 
