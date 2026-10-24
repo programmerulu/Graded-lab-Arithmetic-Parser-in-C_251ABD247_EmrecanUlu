@@ -53,7 +53,7 @@ char *read_file(const char *path, size_t *out_len){
   
 }
 
-typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_EOL, TOK_BAD } TokType;
+typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_LPAREN, TOK_RPAREN, TOK_EOL, TOK_BAD } TokType;
 
 typedef struct {
     TokType type;
@@ -87,6 +87,8 @@ Token next_token(const char *text, size_t len, size_t *p)
     if (c == '-') { t.type = TOK_MINUS; (*p)++; return t; }
     if (c == '*') { t.type = TOK_STAR;  (*p)++; return t; }
     if (c == '/') { t.type = TOK_SLASH; (*p)++; return t; }
+    if (c == '(') { t.type = TOK_LPAREN; (*p)++; return t; }
+    if (c == ')') { t.type = TOK_RPAREN; (*p)++; return t; }
 
 
     t.type = TOK_BAD;
@@ -94,53 +96,89 @@ Token next_token(const char *text, size_t len, size_t *p)
     return t;
 }
 
-size_t parse_term(const char *text, size_t len, size_t *p, long long *out)
+
+size_t parse_expr(const char *text, size_t len, size_t *p, long long *out);
+
+// Sayı ya da parantezli ifade.
+size_t parse_primary(const char *text, size_t len, size_t *p, long long *out)
 {
     Token t = next_token(text, len, p);
-    if (t.type != TOK_NUM) return t.pos + 1;
-    long long value = t.value;
+    if (t.type == TOK_NUM) {
+        *out = t.value;
+        return 0;
+    }
+    if (t.type == TOK_LPAREN) {
+        size_t err = parse_expr(text, len, p, out);
+        if (err != 0) return err;
+        t = next_token(text, len, p);
+        if (t.type != TOK_RPAREN) return t.pos + 1;
+        return 0;
+    }
+    return t.pos + 1;
+}
 
-    
+size_t parse_term(const char *text, size_t len, size_t *p, long long *out)
+{
+    long long value = 0;
+    size_t err = parse_primary(text, len, p, &value);
+    if (err != 0) return err;
+
     for (;;) {
         size_t q = *p;
         Token op = next_token(text, len, &q);
         if (op.type != TOK_STAR && op.type != TOK_SLASH) break;
-        *p = q; 
+        *p = q;
 
-        t = next_token(text, len, p);
-        if (t.type != TOK_NUM) return t.pos + 1;
+        size_t q2 = *p;
+        Token first = next_token(text, len, &q2);
+
+        long long rhs = 0;
+        err = parse_primary(text, len, p, &rhs);
+        if (err != 0) return err;
 
         if (op.type == TOK_STAR) {
-            value *= t.value;
+            value *= rhs;
         } else {
-           if (t.value == 0) return t.pos + 1;
-            value /= t.value;
+            if (rhs == 0) return first.pos + 1;
+            value /= rhs;
         }
     }
     *out = value;
     return 0;
 }
 
+size_t parse_expr(const char *text, size_t len, size_t *p, long long *out)
+{
+    long long value = 0;
+    size_t err = parse_term(text, len, p, &value);
+    if (err != 0) return err;
+
+    for (;;) {
+        size_t q = *p;
+        Token op = next_token(text, len, &q);          // peek
+        if (op.type != TOK_PLUS && op.type != TOK_MINUS) break;
+        *p = q;
+
+        long long rhs = 0;
+        err = parse_term(text, len, p, &rhs);
+        if (err != 0) return err;
+
+        if (op.type == TOK_PLUS) value += rhs;
+        else                     value -= rhs;
+    }
+    *out = value;
+    return 0;
+}
 
 size_t eval_line(const char *text, size_t len, size_t start, long long *result)
 {
     size_t p = start;
     long long value = 0;
-    size_t err = parse_term(text, len, &p, &value);
+    size_t err = parse_expr(text, len, &p, &value);
     if (err != 0) return err;
 
-    for (;;) {
-        Token t = next_token(text, len, &p);
-        if (t.type == TOK_EOL) break;
-        if (t.type != TOK_PLUS && t.type != TOK_MINUS) return t.pos + 1;
-        TokType op = t.type;
-
-        long long rhs = 0;
-        err = parse_term(text, len, &p, &rhs);
-        if (err != 0) return err;
-        if (op == TOK_PLUS) value += rhs;
-        else                value -= rhs;
-    }
+    Token t = next_token(text, len, &p);
+    if (t.type != TOK_EOL) return t.pos + 1; 
     *result = value;
     return 0;
 }
