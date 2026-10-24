@@ -40,7 +40,20 @@ int main(int argc, char**argv) {
 
     
   }
-  if (outdir) printf("outdir=%s\n", outdir);
-  if (input)  printf("input=%s\n", input);
+  
+
+  if(input==NULL){
+
+    fprintf(stderr,"There is no input by user.\n");
+    return 1;
+  }
+
+  FILE*f=fopen(input,"rb");
+  if(f==NULL){
+    fprintf(stderr,"Cannot open '%s'\n",input);
+    return 1;
+  }
+
+  fclose(f);
   return 0;
 } 
