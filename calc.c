@@ -53,15 +53,14 @@ char *read_file(const char *path, size_t *out_len){
   
 }
 
-typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_EOL, TOK_BAD } TokType;
+typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_EOL, TOK_BAD } TokType;
 
 typedef struct {
     TokType type;
-    size_t pos;          // text içindeki indeks (hata pozisyonu = pos + 1)
-    long long value;     // sadece TOK_NUM için anlamlı
+    size_t pos;
+    long long value;
 } Token;
 
-// text'in *p indeksinden başlayarak bir sonraki parçayı okur ve *p'yi ilerletir.
 Token next_token(const char *text, size_t len, size_t *p)
 {
     Token t;
@@ -86,31 +85,61 @@ Token next_token(const char *text, size_t len, size_t *p)
     }
     if (c == '+') { t.type = TOK_PLUS;  (*p)++; return t; }
     if (c == '-') { t.type = TOK_MINUS; (*p)++; return t; }
+    if (c == '*') { t.type = TOK_STAR;  (*p)++; return t; }
+    if (c == '/') { t.type = TOK_SLASH; (*p)++; return t; }
+
 
     t.type = TOK_BAD;
     (*p)++;
     return t;
 }
 
+size_t parse_term(const char *text, size_t len, size_t *p, long long *out)
+{
+    Token t = next_token(text, len, p);
+    if (t.type != TOK_NUM) return t.pos + 1;
+    long long value = t.value;
+
+    
+    for (;;) {
+        size_t q = *p;
+        Token op = next_token(text, len, &q);
+        if (op.type != TOK_STAR && op.type != TOK_SLASH) break;
+        *p = q; 
+
+        t = next_token(text, len, p);
+        if (t.type != TOK_NUM) return t.pos + 1;
+
+        if (op.type == TOK_STAR) {
+            value *= t.value;
+        } else {
+           if (t.value == 0) return t.pos + 1;
+            value /= t.value;
+        }
+    }
+    *out = value;
+    return 0;
+}
+
 
 size_t eval_line(const char *text, size_t len, size_t start, long long *result)
 {
     size_t p = start;
-    Token t = next_token(text, len, &p);
-    if (t.type != TOK_NUM) return t.pos + 1;       // ilk parça sayı olmalı
-    long long value = t.value;
+    long long value = 0;
+    size_t err = parse_term(text, len, &p, &value);
+    if (err != 0) return err;
 
     for (;;) {
-        t = next_token(text, len, &p);
-        if (t.type == TOK_EOL) break;               // satır bitti, hesap tamam
+        Token t = next_token(text, len, &p);
+        if (t.type == TOK_EOL) break;
         if (t.type != TOK_PLUS && t.type != TOK_MINUS) return t.pos + 1;
         TokType op = t.type;
 
-        t = next_token(text, len, &p);
-        if (t.type != TOK_NUM) return t.pos + 1;    // operatörden sonra sayı gelmedi
-
-        if (op == TOK_PLUS) value += t.value;
-        else                value -= t.value;
+        long long rhs = 0;
+        err = parse_term(text, len, &p, &rhs);
+        if (err != 0) return err;
+        if (op == TOK_PLUS) value += rhs;
+        else                value -= rhs;
     }
     *result = value;
     return 0;
