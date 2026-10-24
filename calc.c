@@ -92,6 +92,31 @@ Token next_token(const char *text, size_t len, size_t *p)
     return t;
 }
 
+
+size_t eval_line(const char *text, size_t len, size_t start, long long *result)
+{
+    size_t p = start;
+    Token t = next_token(text, len, &p);
+    if (t.type != TOK_NUM) return t.pos + 1;       // ilk parça sayı olmalı
+    long long value = t.value;
+
+    for (;;) {
+        t = next_token(text, len, &p);
+        if (t.type == TOK_EOL) break;               // satır bitti, hesap tamam
+        if (t.type != TOK_PLUS && t.type != TOK_MINUS) return t.pos + 1;
+        TokType op = t.type;
+
+        t = next_token(text, len, &p);
+        if (t.type != TOK_NUM) return t.pos + 1;    // operatörden sonra sayı gelmedi
+
+        if (op == TOK_PLUS) value += t.value;
+        else                value -= t.value;
+    }
+    *result = value;
+    return 0;
+}
+
+
 int main(int argc, char**argv) {
 
    
@@ -195,12 +220,16 @@ int main(int argc, char**argv) {
     size_t e = s;
     while (e < len && text[e] != '\n') e++;
 
-    size_t p2 = s;
-    for (;;) {
-        Token t = next_token(text, len, &p2);
-        fprintf(out, "type=%d pos=%zu value=%lld\n", t.type, t.pos, t.value);
-        if (t.type == TOK_EOL || t.type == TOK_BAD) break;
+    long long result = 0;
+    size_t err = eval_line(text, len, s, &result);
+    if (err != 0) {
+        fclose(out);
+        out = fopen(outpath, "wb");      // dosyayı sıfırla: önceki sonuçlar silinsin
+        if (out == NULL) { free(text); return 1; }
+        fprintf(out, "ERROR:%zu\n", err);
+        break;                           // ilk hatada dur
     }
+    fprintf(out, "%lld\n", result);
 
     i = e + 1;
 }
