@@ -116,7 +116,14 @@ int main(int argc, char**argv) {
     filename=slash+1;
   }
 
-  printf("%s\n", filename);
+
+  size_t n = strlen(filename);
+  size_t baselen = n;
+  if (n > 4 && strcmp(filename + n - 4, ".txt") == 0) {
+    baselen = n - 4;
+     }
+  printf("%.*s\n", (int)baselen, filename);
+
 
 
 
