@@ -7,12 +7,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
+#include <sys/stat.h>
 
 #define STUDENT_NAME  "emrecan"
 #define STUDENT_LASTNAME  "ulu"
 #define STUDENT_NUMBER  "251ADB247"
-
 
 
 char *read_file(const char *path, size_t *out_len){
@@ -60,6 +59,8 @@ int main(int argc, char**argv) {
 
    const char *outdir=NULL;
    const char *input=NULL;
+
+
   
     for(int i=1; i < argc; i++){
 
@@ -122,7 +123,28 @@ int main(int argc, char**argv) {
   if (n > 4 && strcmp(filename + n - 4, ".txt") == 0) {
     baselen = n - 4;
      }
+
+  char defdir[512];
+  if(outdir==NULL){
+    snprintf(defdir, sizeof defdir, "%.*s_%s_%s", (int)baselen,filename,STUDENT_NAME,STUDENT_NUMBER);
+    outdir=defdir;
+  }
+
+  mkdir(outdir,0777);
+
+  char outpath[1024];
+  snprintf(outpath, sizeof outpath, "%s/%.*s_%s_%s_%s.txt",outdir, (int)baselen, filename, STUDENT_NAME, STUDENT_LASTNAME, STUDENT_NUMBER);
+  FILE *out = fopen(outpath, "wb");
+  if (out == NULL) {
+    fprintf(stderr, "Cannot write '%s'\n", outpath);
+    free(text);
+    return 1;
+}
+  fputs("test\n", out);
+  fclose(out);
+
   printf("%.*s\n", (int)baselen, filename);
+  printf("%s\n", outdir);
 
 
 
