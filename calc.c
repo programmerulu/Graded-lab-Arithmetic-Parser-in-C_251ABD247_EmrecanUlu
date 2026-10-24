@@ -218,6 +218,79 @@ size_t eval_line(const char *text, size_t len, size_t start, long long *result)
 }
 
 
+
+void split_name(const char *path, const char **filename, size_t *baselen)
+{
+    const char *slash = strrchr(path, '/');
+    *filename = (slash == NULL) ? path : slash + 1;
+    size_t n = strlen(*filename);
+    *baselen = n;
+    if (n > 4 && strcmp(*filename + n - 4, ".txt") == 0) *baselen = n - 4;
+}
+
+
+int process_file(const char *input, const char *outdir)
+{
+    size_t len = 0;
+    char *text = read_file(input, &len);
+    if (text == NULL) {
+        fprintf(stderr, "Cannot read '%s'\n", input);
+        return 1;
+    }
+
+    const char *filename;
+    size_t baselen;
+    split_name(input, &filename, &baselen);
+
+    char outpath[1024];
+    snprintf(outpath, sizeof outpath, "%s/%.*s_%s_%s_%s.txt", outdir, (int)baselen, filename,
+             STUDENT_NAME, STUDENT_LASTNAME, STUDENT_NUMBER);
+    FILE *out = fopen(outpath, "wb");
+    if (out == NULL) {
+        fprintf(stderr, "Cannot write '%s'\n", outpath);
+        free(text);
+        return 1;
+    }
+
+    size_t i = 0;
+    while (i < len) {
+        size_t s = i;
+        while (s < len && (text[s] == ' ' || text[s] == '\t')) s++;
+        if (s >= len) break;
+        if (text[s] == '\n') {
+            i = s + 1;
+            continue;
+        }
+
+        if (text[s] == '#') {
+            size_t k = s;
+            while (k < len && text[k] != '\n') k++;
+            i = k + 1;
+            continue;
+        }
+
+        size_t e = s;
+        while (e < len && text[e] != '\n') e++;
+
+        long long result = 0;
+        size_t err = eval_line(text, len, s, &result);
+        if (err != 0) {
+            fclose(out);
+            out = fopen(outpath, "wb"); 
+            if (out == NULL) { free(text); return 1; }
+            fprintf(out, "ERROR:%zu\n", err);
+            break;
+        }
+        fprintf(out, "%lld\n", result);
+
+        i = e + 1;
+    }
+
+    fclose(out);
+    free(text);
+    return 0;
+}
+
 int main(int argc, char**argv) {
 
    
@@ -257,96 +330,20 @@ int main(int argc, char**argv) {
   
  
   if(input==NULL){
-
     fprintf(stderr,"There is no input by user.\n");
     return 1;
   }
 
-  size_t len=0;
-  char *text= read_file(input,&len);
-
-
-  if(text==NULL){
-    fprintf(stderr,"Cannot read '%s'\n",input);
-    return 1;
-  }
-  
-
-  const char *slash = strrchr(input, '/');
-  const char*filename;
-
-  if(slash==NULL){
-    filename=input;
-  }
-
-  else{
-    filename=slash+1;
-  }
-
-
-  size_t n = strlen(filename);
-  size_t baselen = n;
-  if (n > 4 && strcmp(filename + n - 4, ".txt") == 0) {
-    baselen = n - 4;
-     }
+  const char *filename;
+  size_t baselen;
+  split_name(input, &filename, &baselen);
 
   char defdir[512];
-  if(outdir==NULL){
-    snprintf(defdir, sizeof defdir, "%.*s_%s_%s", (int)baselen,filename,STUDENT_NAME,STUDENT_NUMBER);
-    outdir=defdir;
+  if (outdir == NULL) {
+    snprintf(defdir, sizeof defdir, "%.*s_%s_%s", (int)baselen, filename, STUDENT_NAME, STUDENT_NUMBER);
+    outdir = defdir;
   }
+  mkdir(outdir, 0777);
 
-  mkdir(outdir,0777);
-
-  char outpath[1024];
-  snprintf(outpath, sizeof outpath, "%s/%.*s_%s_%s_%s.txt",outdir, (int)baselen, filename, STUDENT_NAME, STUDENT_LASTNAME, STUDENT_NUMBER);
-  FILE *out = fopen(outpath, "wb");
-  if (out == NULL) {
-    fprintf(stderr, "Cannot write '%s'\n", outpath);
-    free(text);
-    return 1;
+  return process_file(input, outdir);
 }
-  
-
-  size_t i = 0;
- while (i < len) {
-    size_t s = i;
-    while (s < len && (text[s] == ' ' || text[s] == '\t')) s++;
-    if (s >= len) break;
-    if (text[s] == '\n') {
-        i = s + 1;
-        continue;
-    }
-
-        if (text[s] == '#') {
-        size_t k = s;
-        while (k < len && text[k] != '\n') k++;
-        i = k + 1;
-        continue;
-    }
-
-    size_t e = s;
-    while (e < len && text[e] != '\n') e++;
-
-    long long result = 0;
-    size_t err = eval_line(text, len, s, &result);
-    if (err != 0) {
-        fclose(out);
-        out = fopen(outpath, "wb");      // dosyayı sıfırla: önceki sonuçlar silinsin
-        if (out == NULL) { free(text); return 1; }
-        fprintf(out, "ERROR:%zu\n", err);
-        break;                           // ilk hatada dur
-    }
-    fprintf(out, "%lld\n", result);
-
-    i = e + 1;
-}
-
-  fclose(out);
-
-
-
-
-  free(text);
-  return 0;
-} 
