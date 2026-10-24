@@ -54,6 +54,11 @@ int main(int argc, char**argv) {
     return 1;
   }
 
+
+  char buf[100];
+  size_t got= fread(buf,1,sizeof buf, f);
+  printf("%zu bytes read\n",got);
+
   fclose(f);
   return 0;
 } 
