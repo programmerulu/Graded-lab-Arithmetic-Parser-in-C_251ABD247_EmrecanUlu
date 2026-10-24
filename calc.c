@@ -10,6 +10,45 @@
 
 
 
+char *read_file(const char *path, size_t *out_len){
+  FILE*f=fopen(path,"rb");
+    if(f==NULL){
+      return NULL;
+    }
+
+
+  size_t cap=16;
+  size_t len=0;
+  char *buf = malloc(cap + 1);
+  if(buf==NULL){
+    fclose(f);
+    return NULL;
+  }
+
+  for(;;){
+    size_t got= fread(buf+len,1,cap-len,f);
+    len+=got;
+    if(len<cap){
+        break;
+        
+    }
+    cap*=2;
+    char *tmp = realloc(buf,cap +1);
+        if (tmp == NULL) {
+            free(buf);
+            fclose(f);
+            return NULL;
+}
+    buf = tmp;
+  }
+
+  buf[len]='\0';
+  fclose(f);
+  *out_len=len;
+  return buf;
+  
+}
+
 int main(int argc, char**argv) {
    const char *outdir=NULL;
    const char *input=NULL;
@@ -42,50 +81,21 @@ int main(int argc, char**argv) {
     
   }
   
-
+ 
   if(input==NULL){
 
     fprintf(stderr,"There is no input by user.\n");
     return 1;
   }
 
-  FILE*f=fopen(input,"rb");
-  if(f==NULL){
-    fprintf(stderr,"Cannot open '%s'\n",input);
-    return 1;
-  }
-
-
-  size_t cap=16;
   size_t len=0;
-  char *buf = malloc(cap + 1);
-  if(buf==NULL){
-    fprintf(stderr,"The file has not been uploaded.\n");
-    fclose(f);
+  char *text= read_file(input,&len);
+  if(text==NULL){
+    fprintf(stderr,"Cannot read '%s'\n",input);
     return 1;
   }
-
-  for(;;){
-    size_t got= fread(buf+len,1,cap-len,f);
-    len+=got;
-    if(len<cap){
-        break;
-        
-    }
-    cap*=2;
-    char *tmp = realloc(buf,cap +1);
-        if (tmp == NULL) {
-            free(buf);
-            fclose(f);
-            fprintf(stderr, "Out of memory.\n");
-            return 1;
-}
-    buf = tmp;
-  }
-
-  buf[len]='\0';
-  printf("%zu bytes read\n",len);
-  fclose(f);
-  free(buf);
+  
+  printf("%zu bytes read\n", len);
+  free(text);
   return 0;
 } 
