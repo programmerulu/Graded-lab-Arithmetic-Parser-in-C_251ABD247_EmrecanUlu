@@ -140,11 +140,28 @@ int main(int argc, char**argv) {
     free(text);
     return 1;
 }
-  fputs("test\n", out);
-  fclose(out);
+  
 
-  printf("%.*s\n", (int)baselen, filename);
-  printf("%s\n", outdir);
+  size_t i = 0;
+  while (i < len) {
+    size_t s = i;
+    while (s < len && (text[s] == ' ' || text[s] == '\t')) s++;
+
+      if (s >= len) break;
+      if (text[s] == '\n') {
+          i = s + 1;
+          continue;
+      } 
+
+      size_t e = s;
+      while (e < len && text[e] != '\n') e++;
+
+      fprintf(out, "%.*s\n", (int)(e - s), text + s);
+
+      i = e + 1;
+}
+
+  fclose(out);
 
 
 
