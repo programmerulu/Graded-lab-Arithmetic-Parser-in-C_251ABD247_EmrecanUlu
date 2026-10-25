@@ -4,10 +4,15 @@
 // Resources used: <every AI tool, website and book you used; details in comments where you used them>
 
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <errno.h>
+#include <math.h>
 
 #define STUDENT_NAME  "emrecan"
 #define STUDENT_LASTNAME  "ulu"
@@ -55,31 +60,46 @@ char *read_file(const char *path, size_t *out_len){
 
 typedef enum { TOK_NUM, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_POW, TOK_LPAREN, TOK_RPAREN, TOK_EOL, TOK_BAD } TokType;
 
-typedef struct {
-    TokType type;
-    size_t pos;
-    long long value;
-} Token;
+// A number that remembers whether it is an integer or a float.
+typedef struct { int is_float; long long i; double d; } Value;
+
+typedef struct { TokType type; size_t pos; Value num; } Token;
 
 Token next_token(const char *text, size_t len, size_t *p)
 {
     Token t;
-    t.value = 0;
-
+    t.num.is_float = 0; t.num.i = 0; t.num.d = 0.0;
     while (*p < len && (text[*p] == ' ' || text[*p] == '\t')) (*p)++;
     t.pos = *p;
-
-    if (*p >= len || text[*p] == '\n') {
-        t.type = TOK_EOL;
-        return t;
-    }
-
+    if (*p >= len || text[*p] == '\n') { t.type = TOK_EOL; return t; }
     char c = text[*p];
     if (c >= '0' && c <= '9') {
+        size_t start = *p;
+        unsigned long long acc = 0;       // unsigned: wrapping is defined, no UB
         t.type = TOK_NUM;
         while (*p < len && text[*p] >= '0' && text[*p] <= '9') {
-            t.value = t.value * 10 + (text[*p] - '0');
+            acc = acc * 10 + (unsigned long long)(text[*p] - '0');
             (*p)++;
+        }
+        t.num.i = (long long)acc;
+        // A float needs digits on BOTH sides of the dot. If '.' is not followed by a
+        // digit we leave it alone: the next token then starts at the '.', which is not
+        // a valid token, so the error lands exactly on the '.' as the lab requires.
+        if (*p + 1 < len && text[*p] == '.' && text[*p + 1] >= '0' && text[*p + 1] <= '9') {
+            (*p)++;
+            while (*p < len && text[*p] >= '0' && text[*p] <= '9') (*p)++;
+            // strtod needs a NUL-terminated string, so copy just this token.
+            size_t n = *p - start;
+            char small[64];
+            char *tmp = (n < sizeof small) ? small : malloc(n + 1);
+            if (tmp == NULL) { t.type = TOK_BAD; return t; }
+            memcpy(tmp, text + start, n);
+            tmp[n] = '\0';
+            double d = strtod(tmp, NULL);
+            if (tmp != small) free(tmp);
+            if (!isfinite(d)) { t.type = TOK_BAD; return t; }
+            t.num.is_float = 1;
+            t.num.d = d;
         }
         return t;
     }
@@ -92,24 +112,69 @@ Token next_token(const char *text, size_t len, size_t *p)
     if (c == '/') { t.type = TOK_SLASH; (*p)++; return t; }
     if (c == '(') { t.type = TOK_LPAREN; (*p)++; return t; }
     if (c == ')') { t.type = TOK_RPAREN; (*p)++; return t; }
-
-
-    t.type = TOK_BAD;
-    (*p)++;
-    return t;
+    t.type = TOK_BAD; (*p)++; return t;
 }
 
+static double as_double(Value v) { return v.is_float ? v.d : (double)v.i; }
 
-size_t parse_expr(const char *text, size_t len, size_t *p, long long *out);
-
-// Sayı ya da parantezli ifade.
-size_t parse_primary(const char *text, size_t len, size_t *p, long long *out)
+// + - * / on two Values. Returns 0 on success or the 1-based error position.
+// op_pos: the operator (float overflow/NaN is reported there).
+// rhs_pos: start of the right operand (division by zero is reported there).
+size_t apply_arith(TokType op, size_t op_pos, size_t rhs_pos, Value a, Value b, Value *out)
 {
-    Token t = next_token(text, len, p);
-    if (t.type == TOK_NUM) {
-        *out = t.value;
+    Value r = {0, 0, 0.0};
+    if (!a.is_float && !b.is_float) {              // both integers: stay in long long
+        unsigned long long ua = (unsigned long long)a.i, ub = (unsigned long long)b.i;
+        if (op == TOK_PLUS)       r.i = (long long)(ua + ub);
+        else if (op == TOK_MINUS) r.i = (long long)(ua - ub);
+        else if (op == TOK_STAR)  r.i = (long long)(ua * ub);
+        else {
+            if (b.i == 0) return rhs_pos + 1;
+            if (b.i == -1) r.i = (long long)(0ULL - ua);   // avoids LLONG_MIN / -1 overflow
+            else r.i = a.i / b.i;
+        }
+        *out = r;
         return 0;
     }
+    double x = as_double(a), y = as_double(b), z = 0.0;   // any float: switch to double
+    if (op == TOK_PLUS)       z = x + y;
+    else if (op == TOK_MINUS) z = x - y;
+    else if (op == TOK_STAR)  z = x * y;
+    else {
+        if (y == 0.0) return rhs_pos + 1;
+        z = x / y;
+    }
+    if (!isfinite(z)) return op_pos + 1;
+    r.is_float = 1; r.d = z;
+    *out = r;
+    return 0;
+}
+
+size_t apply_pow(size_t op_pos, size_t exp_pos, Value base, Value ex, Value *out)
+{
+    Value r = {0, 0, 0.0};
+    if (!base.is_float && !ex.is_float) {
+        if (ex.i < 0) return exp_pos + 1;
+        unsigned long long result = 1, b = (unsigned long long)base.i;
+        long long e = ex.i;
+        while (e > 0) { if (e & 1) result *= b; b *= b; e >>= 1; }
+        r.i = (long long)result;
+        *out = r;
+        return 0;
+    }
+    double z = pow(as_double(base), as_double(ex));
+    if (!isfinite(z)) return op_pos + 1;
+    r.is_float = 1; r.d = z;
+    *out = r;
+    return 0;
+}
+
+size_t parse_expr(const char *text, size_t len, size_t *p, Value *out);
+
+size_t parse_primary(const char *text, size_t len, size_t *p, Value *out)
+{
+    Token t = next_token(text, len, p);
+    if (t.type == TOK_NUM) { *out = t.num; return 0; }
     if (t.type == TOK_LPAREN) {
         size_t err = parse_expr(text, len, p, out);
         if (err != 0) return err;
@@ -120,99 +185,76 @@ size_t parse_primary(const char *text, size_t len, size_t *p, long long *out)
     return t.pos + 1;
 }
 
-
-size_t parse_power(const char *text, size_t len, size_t *p, long long *out)
+// power() calls itself for the exponent, so 2 ** 3 ** 2 groups as 2 ** (3 ** 2).
+size_t parse_power(const char *text, size_t len, size_t *p, Value *out)
 {
-    long long base = 0;
+    Value base = {0, 0, 0.0};
     size_t err = parse_primary(text, len, p, &base);
     if (err != 0) return err;
-
     size_t q = *p;
     Token op = next_token(text, len, &q);
     if (op.type != TOK_POW) { *out = base; return 0; }
     *p = q;
-
     size_t q2 = *p;
     Token first = next_token(text, len, &q2);
-
-    long long ex = 0;
+    Value ex = {0, 0, 0.0};
     err = parse_power(text, len, p, &ex);
     if (err != 0) return err;
-
-    if (ex < 0) return first.pos + 1;
-
-    unsigned long long result = 1, b = (unsigned long long)base;
-    while (ex > 0) {
-        if (ex & 1) result *= b;
-        b *= b;
-        ex >>= 1;
-    }
-    *out = (long long)result;
-    return 0;
+    return apply_pow(op.pos, first.pos, base, ex, out);
 }
 
-size_t parse_term(const char *text, size_t len, size_t *p, long long *out)
+size_t parse_term(const char *text, size_t len, size_t *p, Value *out)
 {
-    long long value = 0;
+    Value value = {0, 0, 0.0};
     size_t err = parse_power(text, len, p, &value);
     if (err != 0) return err;
-
     for (;;) {
         size_t q = *p;
         Token op = next_token(text, len, &q);
         if (op.type != TOK_STAR && op.type != TOK_SLASH) break;
         *p = q;
-
         size_t q2 = *p;
         Token first = next_token(text, len, &q2);
-
-        long long rhs = 0;
+        Value rhs = {0, 0, 0.0};
         err = parse_power(text, len, p, &rhs);
         if (err != 0) return err;
-
-        if (op.type == TOK_STAR) {
-            value *= rhs;
-        } else {
-            if (rhs == 0) return first.pos + 1;
-            value /= rhs;
-        }
+        err = apply_arith(op.type, op.pos, first.pos, value, rhs, &value);
+        if (err != 0) return err;
     }
     *out = value;
     return 0;
 }
 
-size_t parse_expr(const char *text, size_t len, size_t *p, long long *out)
+size_t parse_expr(const char *text, size_t len, size_t *p, Value *out)
 {
-    long long value = 0;
+    Value value = {0, 0, 0.0};
     size_t err = parse_term(text, len, p, &value);
     if (err != 0) return err;
-
     for (;;) {
         size_t q = *p;
-        Token op = next_token(text, len, &q);          // peek
+        Token op = next_token(text, len, &q);
         if (op.type != TOK_PLUS && op.type != TOK_MINUS) break;
         *p = q;
-
-        long long rhs = 0;
+        size_t q2 = *p;
+        Token first = next_token(text, len, &q2);
+        Value rhs = {0, 0, 0.0};
         err = parse_term(text, len, p, &rhs);
         if (err != 0) return err;
-
-        if (op.type == TOK_PLUS) value += rhs;
-        else                     value -= rhs;
+        err = apply_arith(op.type, op.pos, first.pos, value, rhs, &value);
+        if (err != 0) return err;
     }
     *out = value;
     return 0;
 }
 
-size_t eval_line(const char *text, size_t len, size_t start, long long *result)
+size_t eval_line(const char *text, size_t len, size_t start, Value *result)
 {
     size_t p = start;
-    long long value = 0;
+    Value value = {0, 0, 0.0};
     size_t err = parse_expr(text, len, &p, &value);
     if (err != 0) return err;
-
     Token t = next_token(text, len, &p);
-    if (t.type != TOK_EOL) return t.pos + 1; 
+    if (t.type != TOK_EOL) return t.pos + 1;
     *result = value;
     return 0;
 }
@@ -272,7 +314,7 @@ int process_file(const char *input, const char *outdir)
         size_t e = s;
         while (e < len && text[e] != '\n') e++;
 
-        long long result = 0;
+        Value result = {0, 0, 0.0};
         size_t err = eval_line(text, len, s, &result);
         if (err != 0) {
             fclose(out);
@@ -281,7 +323,8 @@ int process_file(const char *input, const char *outdir)
             fprintf(out, "ERROR:%zu\n", err);
             break;
         }
-        fprintf(out, "%lld\n", result);
+            if (result.is_float) fprintf(out, "%.15g\n", result.d);
+        else   fprintf(out, "%lld\n", result.i);
 
         i = e + 1;
     }
@@ -291,59 +334,107 @@ int process_file(const char *input, const char *outdir)
     return 0;
 }
 
-int main(int argc, char**argv) {
 
-   
-
-   const char *outdir=NULL;
-   const char *input=NULL;
-
-
-  
-    for(int i=1; i < argc; i++){
-
-    if(strcmp(argv[i],"-o") == 0){
-
-        if(argv[i+1]!=NULL){
-            outdir=argv[i+1];
-            i++;
-        }
-        else{
-            fprintf(stderr,"Missing argument.\n");
-            return 1;
-        }
-    }
-
-    else if(argv[i][0]=='-'){
-
-        fprintf(stderr,"Unknown option.\n");
+int process_dir(const char *dir, const char *outdir)
+{
+    DIR *d = opendir(dir);
+    if (d == NULL) {
+        fprintf(stderr, "Cannot open folder '%s'\n", dir);
         return 1;
     }
 
-    else{
+    int rc = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        const char *name = ent->d_name;
+        size_t n = strlen(name);
+        if (n <= 4 || strcmp(name + n - 4, ".txt") != 0) continue;
 
-        input=argv[i];
+        char path[1024];
+        snprintf(path, sizeof path, "%s/%s", dir, name);
+
+        struct stat st;
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue; 
+
+        if (process_file(path, outdir) != 0) rc = 1;
+    }
+    closedir(d);
+    return rc;
+}
+
+int main(int argc, char **argv)
+{
+    const char *outdir = NULL, *input = NULL, *dir = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output-dir") == 0) {
+            if (argv[i + 1] == NULL) {
+                fprintf(stderr, "Missing argument for '%s'\n", argv[i]);
+                return 1;
+            }
+            outdir = argv[++i];
+        }
+                else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--dir") == 0) {
+            if (argv[i + 1] == NULL) {
+                fprintf(stderr, "Missing argument for '%s'\n", argv[i]);
+                return 1;
+            }
+            dir = argv[++i];
+        }
+        else if (argv[i][0] == '-') {
+            fprintf(stderr, "Unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+        else {
+            input = argv[i];
+        }
     }
 
-    
-  }
-  
- 
-  if(input==NULL){
-    fprintf(stderr,"There is no input by user.\n");
-    return 1;
-  }
+    if (input == NULL && dir == NULL) {
+        fprintf(stderr, "usage: calc [-d DIR] [-o OUTDIR] [input.txt]\n");
+        return 1;
+    }
+    if (input != NULL && dir != NULL) {
+        fprintf(stderr, "Give either an input file or -d DIR, not both\n");
+        return 1;
+    }
 
-  const char *filename;
-  size_t baselen;
-  split_name(input, &filename, &baselen);
+    const char *src = (dir != NULL) ? dir : input;
+    struct stat st;
+    if (stat(src, &st) != 0) {
+        fprintf(stderr, "Cannot access '%s'\n", src);
+        return 1;
+    }
+    if (dir != NULL && !S_ISDIR(st.st_mode)) {
+        fprintf(stderr, "'%s' is not a folder\n", dir);
+        return 1;
+    }
+    if (input != NULL && !S_ISREG(st.st_mode)) {
+        fprintf(stderr, "'%s' is not a file\n", input);
+        return 1;
+    }
 
-  char defdir[512];
-  if (outdir == NULL) {
-    snprintf(defdir, sizeof defdir, "%.*s_%s_%s", (int)baselen, filename, STUDENT_NAME, STUDENT_NUMBER);
-    outdir = defdir;
-  }
-  mkdir(outdir, 0777);
+    char defdir[1024];
+    if (outdir == NULL) {
+        char srccopy[1024];
+        snprintf(srccopy, sizeof srccopy, "%s", src);
+        size_t sl = strlen(srccopy);
+        while (sl > 1 && srccopy[sl - 1] == '/') srccopy[--sl] = '\0';   // "labs/" -> "labs"
 
-  return process_file(input, outdir);
+        const char *filename;
+        size_t baselen;
+        split_name(srccopy, &filename, &baselen);
+        if (dir != NULL) baselen = strlen(filename);   // klasör adından ".txt" atılmaz
+
+        snprintf(defdir, sizeof defdir, "%.*s_%s_%s", (int)baselen, filename, STUDENT_NAME, STUDENT_NUMBER);
+        outdir = defdir;
+    }
+
+    if (mkdir(outdir, 0777) != 0 && errno != EEXIST) {   // zaten varsa sorun değil
+        fprintf(stderr, "Cannot create folder '%s'\n", outdir);
+        return 1;
+    }
+
+    if (dir != NULL) return process_dir(dir, outdir);
+    return process_file(input, outdir);
 }
